@@ -1,3 +1,9 @@
+use std::fs::File;
+use std::io::Read;
+use std::env;
+use std::mem;
+
+#[derive(Debug)]
 struct Config {
   dim: u32,
   hidden_dim: u32,
@@ -83,8 +89,16 @@ fn argmax(x: Vec<f32>) {
 }
 
 fn main() {
-  let a = vec![vec![1., 2., 3.], vec![4., 5., 6.]];
-  let b = vec![vec![7., 8., 1., 1.], vec![8., 10., 1., 1.], vec![11., 12., 1., 1.]];
-  let c = matmul(&a, &b);
-  println!("{:?}", c);
+  let args: Vec<String> = env::args().collect();
+  assert!(args.len() == 2, "you must provide a model file");
+  let model_file = &args[1];
+  // assert if file exists
+  assert!(std::path::Path::new(model_file).exists(), "model file not found");
+  let mut file = File::open(model_file).unwrap();
+
+  let mut config_buffer = [0; std::mem::size_of::<Config>()];
+  file.read_exact(&mut config_buffer).unwrap();
+
+  let config: Config = unsafe { std::mem::transmute(config_buffer) };
+  println!("Config: {:?}", config);
 }
