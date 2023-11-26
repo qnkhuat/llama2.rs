@@ -5,13 +5,13 @@ use std::mem;
 
 #[derive(Debug)]
 struct Config {
-  dim: u32,
-  hidden_dim: u32,
-  n_layers: u32,
-  n_heads: u32,
-  n_kv_heads: u32,
-  vocab_size: u32,
-  seq_len: u32,
+  dim: usize,
+  hidden_dim: usize,
+  n_layers: usize,
+  n_heads: usize,
+  n_kv_heads: usize,
+  vocab_size: usize,
+  seq_len: usize,
 }
 
 struct TransformerWeights {
@@ -37,6 +37,36 @@ struct TransformerWeights {
   freq_cis_imag: Vec<Vec<f32>>, // (seq_len, dim / 2)
 }
 
+fn read_f32_array(file: &mut File, size: usize) -> Vec<f32>{
+  let mut buffer = vec![0; size];
+  file.read_exact(&mut buffer).unwrap();
+  return buffer.chunks(4).map(|x| f32::from_le_bytes([x[0], x[1], x[2], x[3]])).collect::<Vec<f32>>();
+}
+
+fn read_3d_vec(file: &mut File, shape: (usize, usize, usize)) -> Vec<Vec<Vec<f32>>> {
+  let mut f32_buffer = read_f32_array(file, shape.0 * shape.1 * shape.2);
+  let mut vec = vec![vec![vec![0.; shape.2]; shape.1]; shape.0];
+  for i in 0..shape.0 {
+    for j in 0..shape.1 {
+      for k in 0..shape.2 {
+        vec[i][j][k] = f32_buffer[i * shape.1 * shape.2 + j * shape.2 + k];
+      }
+    }
+  }
+  return vec;
+}
+
+fn read_2d_vec(file: &mut File, shape: (usize, usize)) -> Vec<Vec<f32>> {
+  let mut f32_buffer = read_f32_array(file, shape.0 * shape.1);
+  let mut vec = vec![vec![0. ; shape.1]; shape.0];
+  for i in 0..shape.0 {
+    for j in 0..shape.1 {
+      vec[i][j] = f32_buffer[i * shape.1 + j];
+    }
+  }
+  return vec;
+}
+
 struct RunState {
   x: Vec<f32>, // activation of the current time stamp (dim, )
   xb: Vec<f32>, // same, but inside a residual branch (dim,)
@@ -53,9 +83,9 @@ struct RunState {
   value_cache: Vec<Vec<Vec<f32>>>, // (layer, seq_len, dim)
 }
 
-fn load_weights() {
-
-}
+//fn load_weights(file: &mut File) -> TransformerWeights{
+//
+//}
 
 fn accumulate(x: &mut Vec<f32>, y: &Vec<f32>) {
   for i in 0..x.len() {
@@ -87,6 +117,7 @@ fn matmul(x: &Vec<Vec<f32>>, y: &Vec<Vec<f32>>) -> Vec<Vec<f32>>{
 fn argmax(x: Vec<f32>) {
 
 }
+const CONFIG_SIZE: usize = std::mem::size_of::<u32>() * 7;
 
 fn main() {
   let args: Vec<String> = env::args().collect();
@@ -95,10 +126,33 @@ fn main() {
   // assert if file exists
   assert!(std::path::Path::new(model_file).exists(), "model file not found");
   let mut file = File::open(model_file).unwrap();
-
-  let mut config_buffer = [0; std::mem::size_of::<Config>()];
+  let mut config_buffer  = [0; CONFIG_SIZE];
   file.read_exact(&mut config_buffer).unwrap();
-
-  let config: Config = unsafe { std::mem::transmute(config_buffer) };
-  println!("Config: {:?}", config);
+  let raw_config = unsafe { std::mem::transmute::<[u8; CONFIG_SIZE], [i32; 7]>(config_buffer) };
+  let config = Config {
+    dim: raw_config[0] as usize,
+    hidden_dim: raw_config[1] as usize,
+    n_layers: raw_config[2] as usize,
+    n_heads: raw_config[3] as usize,
+    n_kv_heads: raw_config[4] as usize,
+    vocab_size: raw_config[5] as usize,
+    seq_len: raw_config[6] as usize,
+  };
+  println!("Config: {:?}", raw_config);
+  // load weights;
+  let w = TransformerWeights {
+    token_embedding_table: read_2d_vec(&mut file, (config.vocab_size, config.dim)),
+    rms_att_weight: read_2d_vec(&mut file, (config.n_layers, config.dim)),
+    rms_ffn_weight: read_2d_vec(&mut file, (config.n_layers, config.dim)),
+    wq: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
+    wk: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
+    wv: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
+    wo: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
+    w1: read_3d_vec(&mut file, (config.n_layers, config.hidden_dim, config.dim)),
+    w2: read_3d_vec(&mut file, (config.n_layers, config.dim, config.hidden_dim)),
+    w3: read_3d_vec(&mut file, (config.n_layers, config.hidden_dim, config.dim)),
+    rms_final_weight: read_f32_array(&mut file, config.dim),
+    freq_cis_real: read_2d_vec(&mut file, (config.seq_len, (config.dim / 2) as usize)),
+    freq_cis_imag: read_2d_vec(&mut file, (config.seq_len, (config.dim / 2) as usize)),
+  };
 }
