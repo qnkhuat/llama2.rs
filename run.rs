@@ -43,8 +43,13 @@ fn read_f32_array(file: &mut File, size: usize) -> Vec<f32>{
   return buffer.chunks(4).map(|x| f32::from_le_bytes([x[0], x[1], x[2], x[3]])).collect::<Vec<f32>>();
 }
 
+fn read_string(file: &mut File, size: usize) -> String {
+  let mut buffer = vec![0; size];
+  file.read_exact(&mut buffer).unwrap();
+  return String::from_utf8(buffer).unwrap();
+}
+
 fn read_3d_vec(file: &mut File, shape: (usize, usize, usize)) -> Vec<Vec<Vec<f32>>> {
-  println!("READING 3d {:?}", shape);
   let mut f32_buffer = read_f32_array(file, shape.0 * shape.1 * shape.2);
   let mut vec = vec![vec![vec![0.; shape.2]; shape.1]; shape.0];
   for i in 0..shape.0 {
@@ -58,7 +63,6 @@ fn read_3d_vec(file: &mut File, shape: (usize, usize, usize)) -> Vec<Vec<Vec<f32
 }
 
 fn read_2d_vec(file: &mut File, shape: (usize, usize)) -> Vec<Vec<f32>> {
-  println!("READING 2d {:?}", shape);
   let mut f32_buffer = read_f32_array(file, shape.0 * shape.1);
   let mut vec = vec![vec![0. ; shape.1]; shape.0];
   for i in 0..shape.0 {
@@ -128,7 +132,7 @@ fn main() {
   // assert if file exists
   assert!(std::path::Path::new(model_file).exists(), "model file not found");
   let mut file = File::open(model_file).unwrap();
-  let mut config_buffer  = [0; CONFIG_SIZE];
+  let mut config_buffer = [0; CONFIG_SIZE];
   file.read_exact(&mut config_buffer).unwrap();
   let raw_config = unsafe { std::mem::transmute::<[u8; CONFIG_SIZE], [i32; 7]>(config_buffer) };
   let config = Config {
@@ -141,6 +145,16 @@ fn main() {
     seq_len: raw_config[6] as usize,
   };
   println!("Config: {:?}", config);
+  // load vocab
+  let mut vocab: Vec<String>= vec![String::new(); config.vocab_size];
+  let mut vocab_file = File::open("tokenizer.bin").unwrap();
+  for i in 0..config.vocab_size {
+    let mut len_buf = [0; 4];
+    vocab_file.read_exact(&mut len_buf).unwrap();
+    let len = i32::from_le_bytes(len_buf);
+    vocab[i] = read_string(&mut vocab_file, len as usize);
+  }
+
   // load weights;
   let head_size = config.dim / config.n_heads;
   let w = TransformerWeights {
