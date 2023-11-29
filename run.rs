@@ -33,17 +33,18 @@ struct TransformerWeights {
   // final rmsnorm
   rms_final_weight: Vec<f32>, // (dim, )
   // freq_cis for RoPE relatively positional embeddings
-  freq_cis_real: Vec<Vec<f32>>, // (seq_len, dim / 2)
-  freq_cis_imag: Vec<Vec<f32>>, // (seq_len, dim / 2)
+  freq_cis_real: Vec<Vec<f32>>, // (seq_len, dim / n_heads / 2)
+  freq_cis_imag: Vec<Vec<f32>>, // (seq_len, dim / n_heads / 2)
 }
 
 fn read_f32_array(file: &mut File, size: usize) -> Vec<f32>{
-  let mut buffer = vec![0; size];
+  let mut buffer = vec![0; size * 4];
   file.read_exact(&mut buffer).unwrap();
   return buffer.chunks(4).map(|x| f32::from_le_bytes([x[0], x[1], x[2], x[3]])).collect::<Vec<f32>>();
 }
 
 fn read_3d_vec(file: &mut File, shape: (usize, usize, usize)) -> Vec<Vec<Vec<f32>>> {
+  println!("READING 3d {:?}", shape);
   let mut f32_buffer = read_f32_array(file, shape.0 * shape.1 * shape.2);
   let mut vec = vec![vec![vec![0.; shape.2]; shape.1]; shape.0];
   for i in 0..shape.0 {
@@ -57,6 +58,7 @@ fn read_3d_vec(file: &mut File, shape: (usize, usize, usize)) -> Vec<Vec<Vec<f32
 }
 
 fn read_2d_vec(file: &mut File, shape: (usize, usize)) -> Vec<Vec<f32>> {
+  println!("READING 2d {:?}", shape);
   let mut f32_buffer = read_f32_array(file, shape.0 * shape.1);
   let mut vec = vec![vec![0. ; shape.1]; shape.0];
   for i in 0..shape.0 {
@@ -138,21 +140,22 @@ fn main() {
     vocab_size: raw_config[5] as usize,
     seq_len: raw_config[6] as usize,
   };
-  println!("Config: {:?}", raw_config);
+  println!("Config: {:?}", config);
   // load weights;
+  let head_size = config.dim / config.n_heads;
   let w = TransformerWeights {
     token_embedding_table: read_2d_vec(&mut file, (config.vocab_size, config.dim)),
     rms_att_weight: read_2d_vec(&mut file, (config.n_layers, config.dim)),
-    rms_ffn_weight: read_2d_vec(&mut file, (config.n_layers, config.dim)),
     wq: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
     wk: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
     wv: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
     wo: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
+    rms_ffn_weight: read_2d_vec(&mut file, (config.n_layers, config.dim)),
     w1: read_3d_vec(&mut file, (config.n_layers, config.hidden_dim, config.dim)),
     w2: read_3d_vec(&mut file, (config.n_layers, config.dim, config.hidden_dim)),
     w3: read_3d_vec(&mut file, (config.n_layers, config.hidden_dim, config.dim)),
     rms_final_weight: read_f32_array(&mut file, config.dim),
-    freq_cis_real: read_2d_vec(&mut file, (config.seq_len, (config.dim / 2) as usize)),
-    freq_cis_imag: read_2d_vec(&mut file, (config.seq_len, (config.dim / 2) as usize)),
+    freq_cis_real: read_2d_vec(&mut file, (config.seq_len, (head_size / 2) as usize)),
+    freq_cis_imag: read_2d_vec(&mut file, (config.seq_len, (head_size / 2) as usize)),
   };
 }
