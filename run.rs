@@ -33,8 +33,8 @@ struct TransformerWeights {
   // final rmsnorm
   rms_final_weight: Vec<f32>, // (dim, )
   // freq_cis for RoPE relatively positional embeddings
-  freq_cis_real: Vec<Vec<f32>>, // (seq_len, dim / n_heads / 2)
-  freq_cis_imag: Vec<Vec<f32>>, // (seq_len, dim / n_heads / 2)
+  freq_cis_real: Vec<Vec<f32>>, // (dim / n_heads / 2, seq_len)
+  freq_cis_imag: Vec<Vec<f32>>, // (dim / n_heads / 2, seq_len)
 }
 
 fn read_f32_array(file: &mut File, size: usize) -> Vec<f32>{
@@ -145,15 +145,6 @@ fn main() {
     seq_len: raw_config[6] as usize,
   };
   println!("Config: {:?}", config);
-  // load vocab
-  let mut vocab: Vec<String>= vec![String::new(); config.vocab_size];
-  let mut vocab_file = File::open("tokenizer.bin").unwrap();
-  for i in 0..config.vocab_size {
-    let mut len_buf = [0; 4];
-    vocab_file.read_exact(&mut len_buf).unwrap();
-    let len = i32::from_le_bytes(len_buf);
-    vocab[i] = read_string(&mut vocab_file, len as usize);
-  }
 
   // load weights;
   let head_size = config.dim / config.n_heads;
@@ -169,7 +160,22 @@ fn main() {
     w2: read_3d_vec(&mut file, (config.n_layers, config.dim, config.hidden_dim)),
     w3: read_3d_vec(&mut file, (config.n_layers, config.hidden_dim, config.dim)),
     rms_final_weight: read_f32_array(&mut file, config.dim),
-    freq_cis_real: read_2d_vec(&mut file, (config.seq_len, (head_size / 2) as usize)),
-    freq_cis_imag: read_2d_vec(&mut file, (config.seq_len, (head_size / 2) as usize)),
+    freq_cis_real: read_2d_vec(&mut file, ((head_size / 2) as usize, config.seq_len)),
+    freq_cis_imag: read_2d_vec(&mut file, ((head_size / 2) as usize, config.seq_len)),
   };
+
+  drop(file);
+
+  // load vocab
+  let mut vocab: Vec<String>= vec![String::new(); config.vocab_size];
+  {
+    let mut vocab_file = File::open("tokenizer.bin").unwrap();
+    for i in 0..config.vocab_size {
+      let mut len_buf = [0; 4];
+      vocab_file.read_exact(&mut len_buf).unwrap();
+      let len = i32::from_le_bytes(len_buf);
+      vocab[i] = read_string(&mut vocab_file, len as usize);
+    }
+  }
+
 }
