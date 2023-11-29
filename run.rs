@@ -89,17 +89,26 @@ struct RunState {
   value_cache: Vec<Vec<Vec<f32>>>, // (layer, seq_len, dim)
 }
 
-//fn load_weights(file: &mut File) -> TransformerWeights{
-//
-//}
-
 fn accumulate(x: &mut Vec<f32>, y: &Vec<f32>) {
   for i in 0..x.len() {
     x[i] += y[i];
   }
 }
 
-fn rmsnorm() {}
+fn rmsnorm(out: &mut Vec<f32>, x: &Vec<f32>, weight: &Vec<f32>) {
+  // root mean square normalization
+  let ss = 0.;
+  for i in 0..out.len(){
+    ss += x[i] * x[i];
+  }
+
+  ss /= o.len() as f32;
+  ss += 1e-5;
+  ss = 1. / std::num::sqrt(ss);
+  for i in 0..out.len() {
+    out[i] = x[i] * ss * weight[i];
+  }
+}
 
 
 fn softmax(x: f32) {
@@ -107,22 +116,70 @@ fn softmax(x: f32) {
 }
 
 
-fn matmul(x: &Vec<Vec<f32>>, y: &Vec<Vec<f32>>) -> Vec<Vec<f32>>{
-  // (a, b) @ (b, c)  => (a, c)
-  let mut z = vec![vec![0.; y[0].len()]; x.len()];
-  for i in 0..x.len() {
-    for j in 0..y[0].len() {
-      for k in 0..y.len() {
-        z[i][j] += x[i][k] * y[k][j];
-      }
+fn matmul(out: &mut Vec<f32>, x: &Vec<f32>, w: &Vec<Vec<f32>>) {
+  // W (d, n) @ (n, ) -> xout (d, )
+  for i in 0..out.len() {
+    out[i] = 0.;
+    for j in 0..x.len() {
+      out[i] += w[i][j] * x[j];
     }
   }
-  return z;
 }
 
 fn argmax(x: Vec<f32>) {
 
 }
+
+
+fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, weights: &mut TransformerWeights) -> usize {
+  let dim = config.dim;
+  let hidden_dim = config.hidden_dim;
+  let head_size = dim / config.n_heads;
+
+  let content_row = weights.token_embedding_table[token];
+  let x = content_row.clone();
+
+  let freq_cis_real_row = &w.freq_cis_real[pos];
+  let freq_cis_imag_row = &w.freq_cis_imag[pos];
+
+  // forward all the layers
+  for l in 0..config.n_layers {
+    // attention rmsnorm
+    rmsnorm(&mut state.xb, &state.x, &weights.rms_att_weight[l]);
+
+    // qkv matmuls for this position
+    matmul(&mut state.q, &state.xb, &weights.wq[l]);
+    matmul(&mut state.k, &state.xb, &weights.wk[l]);
+    matmul(&mut state.v, &state.xb, &weights.wv[l]);
+
+    // apply RoPE rotation to the q and k vectors for each head
+    for h in 0..config.n_heads {
+      // get the q and k vectors for this head
+      let q = &mut state.q[h];
+      let k = &mut state.k[h];
+
+      // rotate q and k by the freq_cis_real and freq_cis_imag
+      for i in (0..config.n_heads).step_by(2) {
+        let q0 = q[i];
+        let q1 = q[i+ 1];
+        let k0 = k[i];
+        let k1 = k[i+ 1];
+        let fcr = freq_cis_real_row[i / 2 as usize];
+        let fci = freq_cis_imag_row[i / 2 as usize];
+        q[i]   = q0 * fcr - q1 * fci;
+        q[i+1] = q0 * fci + q1 * fcr;
+        k[i]   = k0 * fcr - k1 * fci;
+        k[i+1] = k0 * fci + k1 * fcr;
+      }
+    }
+
+    // save key, value as this time step (pos) to our kv cache
+    // TODO
+
+  }
+
+}
+
 const CONFIG_SIZE: usize = std::mem::size_of::<u32>() * 7;
 
 fn main() {
@@ -177,5 +234,30 @@ fn main() {
       vocab[i] = read_string(&mut vocab_file, len as usize);
     }
   }
+
+  let state = RunState {
+    x: vec![0.; config.dim],
+    xb: vec![0.; config.dim],
+    xb2: vec![0.; config.dim],
+    hb: vec![0.; config.hidden_dim],
+    hb2: vec![0.; config.hidden_dim],
+    q: vec![0.; config.dim],
+    k: vec![0.; config.dim],
+    v: vec![0.; config.dim],
+    att: vec![0.; config.seq_len],
+    logits: vec![0.; config.vocab_size],
+    key_cache: vec![vec![vec![0.; config.dim]; config.seq_len]; config.n_layers],
+    value_cache: vec![vec![vec![0.; config.dim]; config.seq_len]; config.n_layers],
+  };
+
+
+  let mut next: usize;
+  let mut token = 1; // 1 = BOS token in Llama-2 sentencepiece
+  let mut pos = 0;
+  while pos < config.seq_len {
+    //transformer(token, pos, config, state, weights);
+
+  }
+
 
 }
