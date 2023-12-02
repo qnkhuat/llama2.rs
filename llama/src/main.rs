@@ -33,8 +33,8 @@ struct TransformerWeights {
   // final rmsnorm
   rms_final_weight: Vec<f32>, // (dim, )
   // freq_cis for RoPE relatively positional embeddings
-  freq_cis_real: Vec<Vec<f32>>, // (seq_len, dim / n_heads / 2)
-  freq_cis_imag: Vec<Vec<f32>>, // (seq_len, dim / n_heads / 2)
+  freq_cis_real: Vec<Vec<f32>>, // (seq_len, dim / 2)
+  freq_cis_imag: Vec<Vec<f32>>, // (seq_len, dim / 2)
 }
 
 fn read_f32_array(file: &mut File, size: usize) -> Vec<f32>{
@@ -161,7 +161,7 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
   let head_size = dim / config.n_heads;
 
   let content_row = &weights.token_embedding_table[token];
-  let mut x = content_row.clone();
+  state.x.copy_from_slice(content_row);
 
   let freq_cis_real_row = &weights.freq_cis_real[pos];
   let freq_cis_imag_row = &weights.freq_cis_imag[pos];
@@ -240,10 +240,10 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
     matmul(&mut state.xb2, &state.xb, &weights.wo[l]);
 
     // residual connection back into x
-    accum(&mut x, &state.xb2);
+    accum(&mut state.x, &state.xb2);
 
     // ffn rmsnorm
-    rmsnorm(&mut state.xb, &x, &weights.rms_ffn_weight[l]);
+    rmsnorm(&mut state.xb, &state.x, &weights.rms_ffn_weight[l]);
 
     // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
     // first calculate self.w1(x) and self.w3(x)
@@ -265,13 +265,13 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
     matmul(&mut state.xb, &state.hb, &weights.w2[l]);
 
     // residual connection back into x
-    accum(&mut x, &state.xb);
+    accum(&mut state.x, &state.xb);
   }
   // final rmsnorm
-  let x2 = x.clone();
-  rmsnorm(&mut x, &x2, &weights.rms_final_weight);
+  let x2 = state.x.clone();
+  rmsnorm(&mut state.x, &x2, &weights.rms_final_weight);
   // classifier into logits
-  matmul(&mut state.logits, &x, &weights.token_embedding_table);
+  matmul(&mut state.logits, &state.x, &weights.token_embedding_table);
 }
 
 
@@ -355,8 +355,8 @@ fn main() {
     if temperature == 0. {
       panic!("TODO: implement argmax");
     } else {
-      for q in 0..vocab.len() {
-        state.logits[q] /= temperature;
+      for i in 0..vocab.len() {
+        state.logits[i] /= temperature;
       }
       softmax(&mut state.logits);
       next = sample(&state.logits);
