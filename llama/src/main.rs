@@ -1,8 +1,7 @@
 use rand::{Rng, thread_rng};
 use std::fs::File;
-use std::io::Read;
+use std::io::{self, Read, Write};
 use std::env;
-use std::mem;
 
 #[derive(Debug)]
 struct Config {
@@ -371,6 +370,7 @@ fn main() {
       next = sample(&state.logits);
     }
     print!("{} ", vocab[next]);
+    io::stdout().flush().expect("Failed to flush stdout");
     token = next;
     pos += 1;
   }
