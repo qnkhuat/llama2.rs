@@ -350,6 +350,7 @@ fn main() {
   let mut next: usize;
   let mut token = 1; // 1 = BOS token in Llama-2 sentencepiece
   let mut pos = 0;
+  let start = std::time::Instant::now();
   while pos < config.seq_len {
     transformer(token, pos, &config, &mut state, &mut weights);
     if temperature == 0. {
@@ -368,4 +369,5 @@ fn main() {
   }
   println!();
 
+  println!("tok/s = {}", config.seq_len as f32 / start.elapsed().as_secs_f32());
 }
