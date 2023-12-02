@@ -361,7 +361,7 @@ fn main() {
       softmax(&mut state.logits);
       next = sample(&state.logits);
     }
-    print!("{} ", vocab[next]);
+    print!("{}", vocab[next]);
     io::stdout().flush().expect("Failed to flush stdout");
     token = next;
     pos += 1;
