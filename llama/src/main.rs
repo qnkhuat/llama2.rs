@@ -33,8 +33,8 @@ struct TransformerWeights {
   // final rmsnorm
   rms_final_weight: Vec<f32>, // (dim, )
   // freq_cis for RoPE relatively positional embeddings
-  freq_cis_real: Vec<Vec<f32>>, // (dim / n_heads / 2, seq_len)
-  freq_cis_imag: Vec<Vec<f32>>, // (dim / n_heads / 2, seq_len)
+  freq_cis_real: Vec<Vec<f32>>, // (seq_len, dim / n_heads / 2)
+  freq_cis_imag: Vec<Vec<f32>>, // (seq_len, dim / n_heads / 2)
 }
 
 fn read_f32_array(file: &mut File, size: usize) -> Vec<f32>{
@@ -50,7 +50,7 @@ fn read_string(file: &mut File, size: usize) -> String {
 }
 
 fn read_3d_vec(file: &mut File, shape: (usize, usize, usize)) -> Vec<Vec<Vec<f32>>> {
-  let mut f32_buffer = read_f32_array(file, shape.0 * shape.1 * shape.2);
+  let f32_buffer = read_f32_array(file, shape.0 * shape.1 * shape.2);
   let mut vec = vec![vec![vec![0.; shape.2]; shape.1]; shape.0];
   for i in 0..shape.0 {
     for j in 0..shape.1 {
@@ -63,7 +63,7 @@ fn read_3d_vec(file: &mut File, shape: (usize, usize, usize)) -> Vec<Vec<Vec<f32
 }
 
 fn read_2d_vec(file: &mut File, shape: (usize, usize)) -> Vec<Vec<f32>> {
-  let mut f32_buffer = read_f32_array(file, shape.0 * shape.1);
+  let f32_buffer = read_f32_array(file, shape.0 * shape.1);
   let mut vec = vec![vec![0. ; shape.1]; shape.0];
   for i in 0..shape.0 {
     for j in 0..shape.1 {
@@ -106,7 +106,7 @@ fn rmsnorm(out: &mut Vec<f32>, x: &Vec<f32>, weight: &Vec<f32>) {
   ss += 1e-5;
   ss = 1. / ss.sqrt();
   for i in 0..out.len() {
-    out[i] = x[i] * ss * weight[i];
+    out[i] = weight[i] * (x[i] * ss);
   }
 }
 
@@ -134,16 +134,16 @@ fn softmax(x: &mut [f32]) {
 fn matmul(out: &mut Vec<f32>, x: &Vec<f32>, w: &Vec<Vec<f32>>) {
   // W (d, n) @ (n, ) -> xout (d, )
   for i in 0..out.len() {
-    out[i] = 0.;
+    let mut val = 0.;
     for j in 0..x.len() {
-      out[i] += w[i][j] * x[j];
+      val += w[i][j] * x[j];
     }
+    out[i] = val;
   }
 }
 
-fn sample(probs: &Vec<f32>) -> usize{
-  let mut rng = thread_rng();
-  // Generate a random floating-point number between 0.0 (inclusive) and 1.0 (exclusive)
+fn sample(probs: &Vec<f32>) -> usize {
+  let mut rng = rand::thread_rng();
   let r: f32 = rng.gen_range(0.0..1.0);
   let mut cdf = 0.;
   for i in 0..probs.len() {
@@ -153,13 +153,7 @@ fn sample(probs: &Vec<f32>) -> usize{
     }
   }
   return probs.len() - 1;
-
 }
-
-fn argmax(x: Vec<f32>) {
-
-}
-
 
 fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, weights: &mut TransformerWeights) {
   let dim = config.dim;
@@ -209,7 +203,6 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
     }
 
     // save key, value as this time step (pos) to our kv cache
-    let loff = l * config.seq_len;
     state.key_cache[l][pos] = state.k.clone();
     state.value_cache[l][pos] = state.v.clone();
 
@@ -219,7 +212,6 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
       let this_head_idx = h * head_size;
       // iterate over all timesteps, including the current one
       for t in 0..(pos + 1) {
-        let this_key_vector_idx = loff + t * dim + this_head_idx;
         // get the key vector for this head and at this timestep
         let k = &state.key_cache[l][t][this_head_idx..this_head_idx + head_size];
         let mut score = 0.;
@@ -238,7 +230,7 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
       for i in 0..head_size {
         let mut val = 0.;
         for t in 0..(pos + 1) {
-          val += state.att[t] + state.value_cache[l][t][this_head_idx + i];
+          val += state.att[t] * state.value_cache[l][t][this_head_idx + i];
         }
         state.xb[this_head_idx + i] = val;
       }
@@ -321,8 +313,8 @@ fn main() {
     w2: read_3d_vec(&mut file, (config.n_layers, config.dim, config.hidden_dim)),
     w3: read_3d_vec(&mut file, (config.n_layers, config.hidden_dim, config.dim)),
     rms_final_weight: read_f32_array(&mut file, config.dim),
-    freq_cis_real: read_2d_vec(&mut file, ((head_size / 2) as usize, config.seq_len)),
-    freq_cis_imag: read_2d_vec(&mut file, ((head_size / 2) as usize, config.seq_len)),
+    freq_cis_real: read_2d_vec(&mut file, (config.seq_len, (head_size / 2) as usize)),
+    freq_cis_imag: read_2d_vec(&mut file, (config.seq_len, (head_size / 2) as usize)),
   };
 
   drop(file);
