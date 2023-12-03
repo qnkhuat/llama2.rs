@@ -1,3 +1,4 @@
+// rustc run.rs -o run.out  && ./run.out model.bin
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::env;
