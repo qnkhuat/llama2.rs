@@ -9,7 +9,7 @@ wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
 
 Build the binary
 ```
-rustc run.rs -o run.out
+rustc run.rs -C opt-level=3 -o run.out
 ```
 
 Run inference

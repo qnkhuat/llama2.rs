@@ -1,4 +1,4 @@
-// rustc run.rs -o run.out  && ./run.out model.bin
+// rustc run.rs -C opt-level=3 -o run.out  && ./run.out model.bin
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::env;
