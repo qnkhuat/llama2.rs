@@ -17,6 +17,10 @@ Run inference
 ./run.out stories15M.bin
 ```
 
-
 # Performance
 Currently the performance is shit, it's generating ~5tok/s on my M1 Max
+
+
+| Commit | Tok / s | Remarks |
+|--------|---------|-------------|
+| 1e79467 | 5.2 | The very first version |
