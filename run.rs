@@ -89,17 +89,17 @@ struct RunState {
   value_cache: Vec<Vec<Vec<f32>>>, // (layer, seq_len, dim)
 }
 
-fn accum(x: &mut Vec<f32>, y: &Vec<f32>) {
+fn accum(x: &mut Vec<f32>, y: &[f32]) {
   for i in 0..x.len() {
     x[i] += y[i];
   }
 }
 
-fn rmsnorm(out: &mut Vec<f32>, x: &Vec<f32>, weight: &Vec<f32>) {
+fn rmsnorm(out: &mut Vec<f32>, x: &Vec<f32>, weight: &[f32]) {
   // root mean square normalization
   let mut ss = 0.;
-  for i in 0..out.len(){
-    ss += x[i] * x[i];
+  for item in x.iter() {
+    ss += item * item;
   }
 
   ss /=  x.len() as f32;
@@ -131,7 +131,7 @@ fn softmax(x: &mut [f32]) {
 }
 
 
-fn matmul(out: &mut Vec<f32>, x: &Vec<f32>, w: &Vec<Vec<f32>>) {
+fn matmul(out: &mut Vec<f32>, x: &Vec<f32>, w: &[Vec<f32>]) {
   // W (d, n) @ (n, ) -> xout (d, )
   for i in 0..out.len() {
     let mut val = 0.;
@@ -204,8 +204,8 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
         let q1 = state.q[this_head_idx + i+ 1];
         let k0 = state.k[this_head_idx + i];
         let k1 = state.k[this_head_idx + i+ 1];
-        let fcr = freq_cis_real_row[i / 2 as usize];
-        let fci = freq_cis_imag_row[i / 2 as usize];
+        let fcr = freq_cis_real_row[i / 2];
+        let fci = freq_cis_imag_row[i / 2];
         state.q[this_head_idx + i]   = q0 * fcr - q1 * fci;
         state.q[this_head_idx + i+1] = q0 * fci + q1 * fcr;
         state.k[this_head_idx + i]   = k0 * fcr - k1 * fci;
@@ -291,7 +291,6 @@ const CONFIG_SIZE: usize = std::mem::size_of::<u32>() * 7;
 
 fn main() {
   let args: Vec<String> = env::args().collect();
-  let temperature = 0.9;
   assert!(args.len() == 2, "you must provide a model file");
   let model_file = &args[1];
   // assert if file exists
