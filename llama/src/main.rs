@@ -1,4 +1,3 @@
-use rand::{Rng, thread_rng};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::env;
@@ -141,18 +140,30 @@ fn matmul(out: &mut Vec<f32>, x: &Vec<f32>, w: &Vec<Vec<f32>>) {
     out[i] = val;
   }
 }
+//use rand::{Rng, thread_rng};
+//fn sample(probs: &Vec<f32>) -> usize {
+//  let mut rng = rand::thread_rng();
+//  let r: f32 = rng.gen_range(0.0..1.0);
+//  let mut cdf = 0.;
+//  for i in 0..probs.len() {
+//    cdf += probs[i];
+//    if r < cdf {
+//      return i;
+//    }
+//  }
+//  return probs.len() - 1;
+//}
 
-fn sample(probs: &Vec<f32>) -> usize {
-  let mut rng = rand::thread_rng();
-  let r: f32 = rng.gen_range(0.0..1.0);
-  let mut cdf = 0.;
+fn argmax(probs: &Vec<f32>) -> usize {
+  let mut max_i = 0;
+  let mut max_p = probs[0];
   for i in 0..probs.len() {
-    cdf += probs[i];
-    if r < cdf {
-      return i;
+    if probs[i] > max_p {
+      max_i = i;
+      max_p = probs[i];
     }
   }
-  return probs.len() - 1;
+  return max_i
 }
 
 fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, weights: &mut TransformerWeights) {
@@ -353,15 +364,7 @@ fn main() {
   let start = std::time::Instant::now();
   while pos < config.seq_len {
     transformer(token, pos, &config, &mut state, &mut weights);
-    if temperature == 0. {
-      panic!("TODO: implement argmax");
-    } else {
-      for i in 0..vocab.len() {
-        state.logits[i] /= temperature;
-      }
-      softmax(&mut state.logits);
-      next = sample(&state.logits);
-    }
+    next = argmax(&state.logits);
     print!("{}", vocab[next]);
     io::stdout().flush().expect("Failed to flush stdout");
     token = next;
