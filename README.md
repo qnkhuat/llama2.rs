@@ -24,3 +24,4 @@ Currently the performance is shit, it's generating ~5tok/s on my M1 Max
 | Commit | Tok / s | Remarks |
 |--------|---------|-------------|
 | 1e79467 | 5.2 | The very first version |
+| 1a3b83e |  75 | build with opt-level=3 | 
