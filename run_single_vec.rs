@@ -17,24 +17,24 @@ struct Config {
 struct TransformerWeights {
   // token embedding table
   // TODO this could be hardcoded and use an array instead of a vector
-  token_embedding_table: Vec<Vec<f32>>, // (vocab_size, dim)
+  token_embedding_table: Vec<f32>, // (vocab_size, dim)
   // weights for rmsnorms
-  rms_att_weight: Vec<Vec<f32>>, // (layers, dim)
-  rms_ffn_weight: Vec<Vec<f32>>, // (layers, dim)
+  rms_att_weight: Vec<f32>, // (layers, dim)
+  rms_ffn_weight: Vec<f32>, // (layers, dim)
   // weights for matmuls
-  wq: Vec<Vec<Vec<f32>>>, // (layers, dim, dim)
-  wk: Vec<Vec<Vec<f32>>>, // (layers, dim, dim)
-  wv: Vec<Vec<Vec<f32>>>, // (layers, dim, dim)
-  wo: Vec<Vec<Vec<f32>>>, // (layers, dim, dim)
+  wq: Vec<f32>, // (layers, dim, dim)
+  wk: Vec<f32>, // (layers, dim, dim)
+  wv: Vec<f32>, // (layers, dim, dim)
+  wo: Vec<f32>, // (layers, dim, dim)
   // weights for ffn
-  w1: Vec<Vec<Vec<f32>>>, // (layers, hidden_dim, dim)
-  w2: Vec<Vec<Vec<f32>>>, // (layers, dim, hidden_dim)
-  w3: Vec<Vec<Vec<f32>>>, // (layers, hidden_dim, dim)
+  w1: Vec<f32>, // (layers, hidden_dim, dim)
+  w2: Vec<f32>, // (layers, dim, hidden_dim)
+  w3: Vec<f32>, // (layers, hidden_dim, dim)
   // final rmsnorm
   rms_final_weight: Vec<f32>, // (dim, )
   // freq_cis for RoPE relatively positional embeddings
-  freq_cis_real: Vec<Vec<f32>>, // (seq_len, dim / 2)
-  freq_cis_imag: Vec<Vec<f32>>, // (seq_len, dim / 2)
+  freq_cis_real: Vec<f32>, // (seq_len, dim / 2)
+  freq_cis_imag: Vec<f32>, // (seq_len, dim / 2)
 }
 
 fn read_f32_array(file: &mut File, size: usize) -> Vec<f32>{
@@ -49,30 +49,6 @@ fn read_string(file: &mut File, size: usize) -> String {
   return String::from_utf8(buffer).unwrap();
 }
 
-fn read_3d_vec(file: &mut File, shape: (usize, usize, usize)) -> Vec<Vec<Vec<f32>>> {
-  let f32_buffer = read_f32_array(file, shape.0 * shape.1 * shape.2);
-  let mut vec = vec![vec![vec![0.; shape.2]; shape.1]; shape.0];
-  for i in 0..shape.0 {
-    for j in 0..shape.1 {
-      for k in 0..shape.2 {
-        vec[i][j][k] = f32_buffer[i * shape.1 * shape.2 + j * shape.2 + k];
-      }
-    }
-  }
-  return vec;
-}
-
-fn read_2d_vec(file: &mut File, shape: (usize, usize)) -> Vec<Vec<f32>> {
-  let f32_buffer = read_f32_array(file, shape.0 * shape.1);
-  let mut vec = vec![vec![0. ; shape.1]; shape.0];
-  for i in 0..shape.0 {
-    for j in 0..shape.1 {
-      vec[i][j] = f32_buffer[i * shape.1 + j];
-    }
-  }
-  return vec;
-}
-
 struct RunState {
   x: Vec<f32>, // activation of the current timestamp (dim, )
   xb: Vec<f32>, // same, but inside a residual branch (dim,)
@@ -85,8 +61,8 @@ struct RunState {
   att: Vec<f32>, // buffer for scores/attention values (seq_len,)
   logits: Vec<f32>, // output logits (vocab_size, )
   // kv cache
-  key_cache: Vec<Vec<Vec<f32>>>,   // (layer, seq_len, dim)
-  value_cache: Vec<Vec<Vec<f32>>>, // (layer, seq_len, dim)
+  key_cache: Vec<f32>,   // (layer, seq_len, dim)
+  value_cache: Vec<f32>, // (layer, seq_len, dim)
 }
 
 fn accum(x: &mut Vec<f32>, y: &[f32]) {
@@ -130,12 +106,15 @@ fn softmax(x: &mut [f32]) {
   }
 }
 
-fn matmul(out: &mut Vec<f32>, x: &Vec<f32>, w: &[Vec<f32>]) {
+fn matmul(out: &mut Vec<f32>, x: &Vec<f32>, w: &[f32]) {
   // W (d, n) @ (n, ) -> xout (d, )
-  for i in 0..out.len() {
+  let n = x.len();
+  let d = out.len();
+
+  for i in 0..d {
     let mut val = 0.;
-    for j in 0..x.len() {
-      val += w[i][j] * x[j];
+    for j in 0..n {
+      val += w[i * n + j] * x[j];
     }
     out[i] = val;
   }
@@ -171,24 +150,24 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
   let hidden_dim = config.hidden_dim;
   let head_size = dim / config.n_heads;
 
-  let content_row = &weights.token_embedding_table[token];
+  let content_row = &weights.token_embedding_table[token * dim .. (token + 1) * dim];
   state.x.copy_from_slice(content_row);
 
-  let freq_cis_real_row = &weights.freq_cis_real[pos];
-  let freq_cis_imag_row = &weights.freq_cis_imag[pos];
+  let freq_cis_real_row = &weights.freq_cis_real[pos * head_size / 2.. (pos + 1) * head_size / 2];
+  let freq_cis_imag_row = &weights.freq_cis_imag[pos * head_size / 2.. (pos + 1) * head_size / 2];
 
   // forward all the layers
   for l in 0..config.n_layers {
     // attention rmsnorm
-    rmsnorm(&mut state.xb, &state.x, &weights.rms_att_weight[l]);
+    rmsnorm(&mut state.xb, &state.x, &weights.rms_att_weight[l * dim .. l * dim + dim]);
 
     // compute attenttion scores
     // NOTE: the value of attention is let transformer aware of the context of a sentence
     // when it processes a token, they say it's like a look up table in the sense that
     // it look up the relevant informations of the "current" token with respect to its context
-    matmul(&mut state.q, &state.xb, &weights.wq[l]);
-    matmul(&mut state.k, &state.xb, &weights.wk[l]);
-    matmul(&mut state.v, &state.xb, &weights.wv[l]);
+    matmul(&mut state.q, &state.xb, &weights.wq[l * dim * dim .. (l + 1) * dim * dim]);
+    matmul(&mut state.k, &state.xb, &weights.wk[l * dim * dim .. (l + 1) * dim * dim]);
+    matmul(&mut state.v, &state.xb, &weights.wv[l * dim * dim .. (l + 1) * dim * dim]);
 
     // NOTE: RoPE: rotary position embedding used to let transformer know the position of the word
     // it's processing with respect to the whole sentence
@@ -210,12 +189,11 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
         state.k[this_head_idx + i]   = k0 * fcr - k1 * fci;
         state.k[this_head_idx + i+1] = k0 * fci + k1 * fcr;
       }
-
     }
 
     // save key, value as this time step (pos) to our kv cache
-    state.key_cache[l][pos] = state.k.clone();
-    state.value_cache[l][pos] = state.v.clone();
+    state.key_cache.splice(l * pos .. l * pos + dim, state.k.iter().cloned());
+    state.value_cache.splice(l * pos .. l * pos + dim, state.v.iter().cloned());
 
     // multihead attention, iterate over all heads
     for h in 0..config.n_heads {
@@ -224,7 +202,7 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
       // iterate over all timesteps, including the current one
       for t in 0..(pos + 1) {
         // get the key vector for this head and at this timestep
-        let k = &state.key_cache[l][t][this_head_idx..this_head_idx + head_size];
+        let k = &state.key_cache[l * t + this_head_idx .. l * t + this_head_idx + head_size];
         let mut score = 0.;
         for i in 0..head_size {
           score += state.q[this_head_idx + i] * k[i];
@@ -241,25 +219,25 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
       for i in 0..head_size {
         let mut val = 0.;
         for t in 0..(pos + 1) {
-          val += state.att[t] * state.value_cache[l][t][this_head_idx + i];
+          val += state.att[t] * state.value_cache[l * t + this_head_idx + 1];
         }
         state.xb[this_head_idx + i] = val;
       }
     }
 
     // final matmul to get the output of the attention
-    matmul(&mut state.xb2, &state.xb, &weights.wo[l]);
+    matmul(&mut state.xb2, &state.xb, &weights.wo[l * dim * dim .. (l + 1) * dim * dim ]);
 
     // residual connection back into x
     accum(&mut state.x, &state.xb2);
 
     // ffn rmsnorm
-    rmsnorm(&mut state.xb, &state.x, &weights.rms_ffn_weight[l]);
+    rmsnorm(&mut state.xb, &state.x, &weights.rms_ffn_weight[l * dim .. (l + 1) * dim]);
 
     // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
     // first calculate self.w1(x) and self.w3(x)
-    matmul(&mut state.hb, &state.xb, &weights.w1[l]);
-    matmul(&mut state.hb2, &state.xb, &weights.w3[l]);
+    matmul(&mut state.hb, &state.xb, &weights.w1[l * hidden_dim * dim .. (l + 1) * hidden_dim * dim]);
+    matmul(&mut state.hb2, &state.xb, &weights.w3[l * hidden_dim * dim .. (l + 1) * hidden_dim * dim]);
 
 
     // F.silu; silu(x)=x*σ(x),where σ(x) is the logistic sigmoid
@@ -273,7 +251,7 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
     }
 
     // final matmul to get the output of the ffn
-    matmul(&mut state.xb, &state.hb, &weights.w2[l]);
+    matmul(&mut state.xb, &state.hb, &weights.w2[l * dim * hidden_dim .. (l + 1) * dim * hidden_dim]);
 
     // residual connection back into x
     accum(&mut state.x, &state.xb);
@@ -312,19 +290,19 @@ fn main() {
   // load weights;
   let head_size = config.dim / config.n_heads;
   let mut weights = TransformerWeights {
-    token_embedding_table: read_2d_vec(&mut file, (config.vocab_size, config.dim)),
-    rms_att_weight: read_2d_vec(&mut file, (config.n_layers, config.dim)),
-    wq: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
-    wk: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
-    wv: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
-    wo: read_3d_vec(&mut file, (config.n_layers, config.dim, config.dim)),
-    rms_ffn_weight: read_2d_vec(&mut file, (config.n_layers, config.dim)),
-    w1: read_3d_vec(&mut file, (config.n_layers, config.hidden_dim, config.dim)),
-    w2: read_3d_vec(&mut file, (config.n_layers, config.dim, config.hidden_dim)),
-    w3: read_3d_vec(&mut file, (config.n_layers, config.hidden_dim, config.dim)),
+    token_embedding_table: read_f32_array(&mut file, config.vocab_size * config.dim),
+    rms_att_weight: read_f32_array(&mut file, config.n_layers * config.dim),
+    wq: read_f32_array(&mut file, config.n_layers * config.dim * config.dim),
+    wk: read_f32_array(&mut file, config.n_layers * config.dim * config.dim),
+    wv: read_f32_array(&mut file, config.n_layers * config.dim * config.dim),
+    wo: read_f32_array(&mut file, config.n_layers * config.dim * config.dim),
+    rms_ffn_weight: read_f32_array(&mut file, config.n_layers * config.dim),
+    w1: read_f32_array(&mut file, config.n_layers * config.hidden_dim * config.dim),
+    w2: read_f32_array(&mut file, config.n_layers * config.dim * config.hidden_dim),
+    w3: read_f32_array(&mut file, config.n_layers * config.hidden_dim * config.dim),
     rms_final_weight: read_f32_array(&mut file, config.dim),
-    freq_cis_real: read_2d_vec(&mut file, (config.seq_len, (head_size / 2) as usize)),
-    freq_cis_imag: read_2d_vec(&mut file, (config.seq_len, (head_size / 2) as usize)),
+    freq_cis_real: read_f32_array(&mut file, config.seq_len * (head_size / 2) as usize),
+    freq_cis_imag: read_f32_array(&mut file, config.seq_len * (head_size / 2) as usize),
   };
 
   drop(file);
@@ -352,8 +330,8 @@ fn main() {
     v: vec![0.; config.dim],
     att: vec![0.; config.seq_len],
     logits: vec![0.; config.vocab_size],
-    key_cache: vec![vec![vec![0.; config.dim]; config.seq_len]; config.n_layers],
-    value_cache: vec![vec![vec![0.; config.dim]; config.seq_len]; config.n_layers],
+    key_cache: vec![0.; config.dim * config.seq_len * config.n_layers],
+    value_cache: vec![0.; config.dim * config.seq_len * config.n_layers],
   };
 
 
