@@ -14,27 +14,36 @@ struct Config {
   seq_len: usize,
 }
 
+//{ dim: 288, hidden_dim: 768, n_layers: 6, n_heads: 6, n_kv_heads: 6, vocab_size: 32000, seq_len: 256 }
+const DIM : usize = 288;
+const HIDDEN_DIM : usize = 768;
+const N_LAYERS : usize = 6;
+const N_HEADS : usize = 6;
+const N_KV_HEADS : usize = 6;
+const VOCAB_SIZE : usize = 32000;
+const SEQ_LEN : usize = 256;
+
 struct TransformerWeights {
   // token embedding table
   // TODO this could be hardcoded and use an array instead of a vector
-  token_embedding_table: Vec<f32>, // (vocab_size, dim)
+  token_embedding_table: [f32; DIM * VOCAB_SIZE], // (vocab_size, dim)
   // weights for rmsnorms
-  rms_att_weight: Vec<f32>, // (layers, dim)
-  rms_ffn_weight: Vec<f32>, // (layers, dim)
+  rms_att_weight: [f32; N_LAYERS * DIM], // (layers, dim)
+  rms_ffn_weight: [f32; N_LAYERS * DIM], // (layers, dim)
   // weights for matmuls
-  wq: Vec<f32>, // (layers, dim, dim)
-  wk: Vec<f32>, // (layers, dim, dim)
-  wv: Vec<f32>, // (layers, dim, dim)
-  wo: Vec<f32>, // (layers, dim, dim)
+  wq: [f32; N_LAYERS * DIM * DIM], // (layers, dim, dim)
+  wk: [f32; N_LAYERS * DIM * DIM], // (layers, dim, dim)
+  wv: [f32; N_LAYERS * DIM * DIM], // (layers, dim, dim)
+  wo: [f32; N_LAYERS * DIM * DIM], // (layers, dim, dim)
   // weights for ffn
-  w1: Vec<f32>, // (layers, hidden_dim, dim)
-  w2: Vec<f32>, // (layers, dim, hidden_dim)
-  w3: Vec<f32>, // (layers, hidden_dim, dim)
+  w1: [f32; N_LAYERS * HIDDEN_DIM * DIM], // (layers, hidden_dim, dim)
+  w2: [f32; N_LAYERS * DIM * HIDDEN_DIM], // (layers, dim, hidden_dim)
+  w3: [f32; N_LAYERS * HIDDEN_DIM * DIM], // (layers, hidden_dim, dim)
   // final rmsnorm
-  rms_final_weight: Vec<f32>, // (dim, )
+  rms_final_weight: [f32; DIM], // (dim, )
   // freq_cis for RoPE relatively positional embeddings
-  freq_cis_real: Vec<f32>, // (seq_len, dim / 2)
-  freq_cis_imag: Vec<f32>, // (seq_len, dim / 2)
+  freq_cis_real: [f32; SEQ_LEN * DIM / N_HEADS / 2], // (seq_len, dim / n_heads / 2)
+  freq_cis_imag: [f32; SEQ_LEN * DIM / N_HEADS / 2], // (seq_len, dim / n_heads / 2)
 }
 
 fn read_f32_array(file: &mut File, size: usize) -> Vec<f32>{
@@ -50,28 +59,28 @@ fn read_string(file: &mut File, size: usize) -> String {
 }
 
 struct RunState {
-  x: Vec<f32>, // activation of the current timestamp (dim, )
-  xb: Vec<f32>, // same, but inside a residual branch (dim,)
-  xb2: Vec<f32>, // an additional buffer just for convenience (dim,)
-  hb: Vec<f32>, // buffer for hidden dimension in the ffn (hidden_dim,)
-  hb2: Vec<f32>, // buffer for hidden dimension in the ffn (hidden_dim,)
-  q: Vec<f32>, // query (dim,)
-  k: Vec<f32>, // key (dim,)
-  v: Vec<f32>, // value (dim,)
-  att: Vec<f32>, // buffer for scores/attention values (seq_len,)
-  logits: Vec<f32>, // output logits (vocab_size, )
+  x: [f32; DIM], // activation of the current timestamp (dim, )
+  xb: [f32; DIM], // same, but inside a residual branch (dim,)
+  xb2: [f32; DIM], // an additional buffer just for convenience (dim,)
+  hb: [f32; HIDDEN_DIM], // buffer for hidden dimension in the ffn (hidden_dim,)
+  hb2: [f32; HIDDEN_DIM], // buffer for hidden dimension in the ffn (hidden_dim,)
+  q: [f32; DIM], // query (dim,)
+  k: [f32; DIM], // key (dim,)
+  v: [f32; DIM], // value (dim,)
+  att: [f32; SEQ_LEN], // buffer for scores/attention values (seq_len,)
+  logits: [f32; VOCAB_SIZE], // output logits (vocab_size, )
   // kv cache
-  key_cache: Vec<f32>,   // (layer, seq_len, dim)
-  value_cache: Vec<f32>, // (layer, seq_len, dim)
+  key_cache: [f32; N_LAYERS * SEQ_LEN * DIM], // (layer, seq_len, dim)
+  value_cache: [f32; N_LAYERS * SEQ_LEN * DIM], // (layer, seq_len, dim)
 }
 
-fn accum(x: &mut Vec<f32>, y: &[f32]) {
+fn accum(x: &mut [f32], y: &[f32]) {
   for i in 0..x.len() {
     x[i] += y[i];
   }
 }
 
-fn rmsnorm(out: &mut Vec<f32>, x: &Vec<f32>, weight: &[f32]) {
+fn rmsnorm(out: &mut [f32], x: &[f32], weight: &[f32]) {
   // root mean square normalization
   let mut ss = 0.;
   for item in x.iter() {
@@ -105,7 +114,7 @@ fn softmax(x: &mut [f32]) {
   }
 }
 
-fn matmul(out: &mut Vec<f32>, w: &[f32], x: &Vec<f32>) {
+fn matmul(out: &mut [f32], w: &[f32], x: &[f32]) {
   // W (d, n) @ (n, ) -> xout (d, )
   let n = x.len();
   let d = out.len();
@@ -131,7 +140,7 @@ fn matmul(out: &mut Vec<f32>, w: &[f32], x: &Vec<f32>) {
 //  return probs.len() - 1;
 //}
 
-fn argmax(probs: &Vec<f32>) -> usize {
+fn argmax(probs: &[f32]) -> usize {
   let mut max_i = 0;
   let mut max_p = probs[0];
   for i in 0..probs.len() {
@@ -191,8 +200,8 @@ fn transformer(token: usize, pos: usize, config: &Config, state: &mut RunState, 
 
     // save key, value as this time step (pos) to our kv cache
     let loff = l * config.seq_len * dim;
-    state.key_cache.splice(loff + pos * dim .. loff + pos * dim + dim, state.k.iter().cloned());
-    state.value_cache.splice(loff + pos * dim .. loff + pos * dim + dim , state.v.iter().cloned());
+    state.key_cache[loff + pos * dim .. loff + (pos + 1) * dim].copy_from_slice(&state.k);
+    state.value_cache[loff + pos * dim .. loff + (pos + 1) * dim].copy_from_slice(&state.v);
 
     // multihead attention, iterate over all heads
     for h in 0..config.n_heads {
@@ -289,64 +298,130 @@ fn main() {
   // load weights;
   let head_size = config.dim / config.n_heads;
   let mut weights = TransformerWeights {
-    token_embedding_table: read_f32_array(&mut file, config.vocab_size * config.dim),
-    rms_att_weight: read_f32_array(&mut file, config.n_layers * config.dim),
-    wq: read_f32_array(&mut file, config.n_layers * config.dim * config.dim),
-    wk: read_f32_array(&mut file, config.n_layers * config.dim * config.dim),
-    wv: read_f32_array(&mut file, config.n_layers * config.dim * config.dim),
-    wo: read_f32_array(&mut file, config.n_layers * config.dim * config.dim),
-    rms_ffn_weight: read_f32_array(&mut file, config.n_layers * config.dim),
-    w1: read_f32_array(&mut file, config.n_layers * config.hidden_dim * config.dim),
-    w2: read_f32_array(&mut file, config.n_layers * config.dim * config.hidden_dim),
-    w3: read_f32_array(&mut file, config.n_layers * config.hidden_dim * config.dim),
-    rms_final_weight: read_f32_array(&mut file, config.dim),
-    freq_cis_real: read_f32_array(&mut file, config.seq_len * (head_size / 2) as usize),
-    freq_cis_imag: read_f32_array(&mut file, config.seq_len * (head_size / 2) as usize),
+    token_embedding_table: {
+      let data = read_f32_array(&mut file, config.vocab_size * config.dim);
+      let mut table = [0.; DIM * VOCAB_SIZE];
+      table.copy_from_slice(&data);
+      table
+    },
+    rms_att_weight: {
+      let data = read_f32_array(&mut file, config.n_layers * config.dim);
+      let mut table = [0.; N_LAYERS * DIM];
+      table.copy_from_slice(&data);
+      table
+    },
+    wq: {
+      let data = read_f32_array(&mut file, config.n_layers * config.dim * config.dim);
+      let mut table = [0.; N_LAYERS * DIM * DIM];
+      table.copy_from_slice(&data);
+      table
+    },
+    wk: {
+      let data = read_f32_array(&mut file, config.n_layers * config.dim * config.dim);
+      let mut table = [0.; N_LAYERS * DIM * DIM];
+      table.copy_from_slice(&data);
+      table
+    },
+    wv: {
+      let data = read_f32_array(&mut file, config.n_layers * config.dim * config.dim);
+      let mut table = [0.; N_LAYERS * DIM * DIM];
+      table.copy_from_slice(&data);
+      table
+    },
+    wo: {
+      let data = read_f32_array(&mut file, config.n_layers * config.dim * config.dim);
+      let mut table = [0.; N_LAYERS * DIM * DIM];
+      table.copy_from_slice(&data);
+      table
+    },
+    rms_ffn_weight: {
+      let data = read_f32_array(&mut file, config.n_layers * config.dim);
+      let mut table = [0.; N_LAYERS * DIM];
+      table.copy_from_slice(&data);
+      table
+    },
+    w1: {
+      let data = read_f32_array(&mut file, config.n_layers * config.dim * config.hidden_dim);
+      let mut table = [0.; N_LAYERS * HIDDEN_DIM * DIM];
+      table.copy_from_slice(&data);
+      table
+    },
+    w2: {
+      let data = read_f32_array(&mut file, config.n_layers * config.hidden_dim * config.dim);
+      let mut table = [0.; N_LAYERS * DIM * HIDDEN_DIM];
+      table.copy_from_slice(&data);
+      table
+    },
+    w3: {
+      let data = read_f32_array(&mut file, config.n_layers * config.dim * config.hidden_dim);
+      let mut table = [0.; N_LAYERS * HIDDEN_DIM * DIM];
+      table.copy_from_slice(&data);
+      table
+    },
+    rms_final_weight: {
+      let data = read_f32_array(&mut file, config.dim);
+      let mut table = [0.; DIM];
+      table.copy_from_slice(&data);
+      table
+    },
+    freq_cis_real: {
+      let data = read_f32_array(&mut file, config.seq_len * (head_size / 2) as usize);
+      let mut table = [0.; SEQ_LEN * DIM / N_HEADS / 2];
+      table.copy_from_slice(&data);
+      table
+    },
+    freq_cis_imag: {
+      let data = read_f32_array(&mut file, config.seq_len * (head_size / 2) as usize);
+      let mut table = [0.; SEQ_LEN * DIM / N_HEADS / 2];
+      table.copy_from_slice(&data);
+      table
+    },
   };
 
-  drop(file);
+  //println!("weights loaded");
 
-  // load vocab
-  let mut vocab: Vec<String>= vec![String::new(); config.vocab_size];
-  {
-    let mut vocab_file = File::open("tokenizer.bin").unwrap();
-    for i in 0..config.vocab_size {
-      let mut len_buf = [0; 4];
-      vocab_file.read_exact(&mut len_buf).unwrap();
-      let len = i32::from_le_bytes(len_buf);
-      vocab[i] = read_string(&mut vocab_file, len as usize);
-    }
-  }
+  //drop(file);
 
-  let mut state = RunState {
-    x: vec![0.; config.dim],
-    xb: vec![0.; config.dim],
-    xb2: vec![0.; config.dim],
-    hb: vec![0.; config.hidden_dim],
-    hb2: vec![0.; config.hidden_dim],
-    q: vec![0.; config.dim],
-    k: vec![0.; config.dim],
-    v: vec![0.; config.dim],
-    att: vec![0.; config.seq_len],
-    logits: vec![0.; config.vocab_size],
-    key_cache: vec![0.; config.dim * config.seq_len * config.n_layers],
-    value_cache: vec![0.; config.dim * config.seq_len * config.n_layers],
-  };
+  //// load vocab
+  //let mut vocab: Vec<String>= vec![String::new(); config.vocab_size];
+  //{
+  //  let mut vocab_file = File::open("tokenizer.bin").unwrap();
+  //  for i in 0..config.vocab_size {
+  //    let mut len_buf = [0; 4];
+  //    vocab_file.read_exact(&mut len_buf).unwrap();
+  //    let len = i32::from_le_bytes(len_buf);
+  //    vocab[i] = read_string(&mut vocab_file, len as usize);
+  //  }
+  //}
 
+  //let mut state = RunState {
+  //  x: [0.; DIM],
+  //  xb: [0.; DIM],
+  //  xb2: [0.; DIM],
+  //  hb: [0.; HIDDEN_DIM],
+  //  hb2: [0.; HIDDEN_DIM],
+  //  q: [0.; DIM],
+  //  k: [0.; DIM],
+  //  v: [0.; DIM],
+  //  att: [0.; SEQ_LEN],
+  //  logits: [0.; VOCAB_SIZE],
+  //  key_cache: [0.; DIM * SEQ_LEN * N_LAYERS],
+  //  value_cache: [0.; DIM * SEQ_LEN * N_LAYERS],
+  //};
 
-  let mut next: usize;
-  let mut token = 1; // 1 = BOS token in Llama-2 sentencepiece
-  let mut pos = 0;
-  let start = std::time::Instant::now();
-  while pos < config.seq_len {
-    transformer(token, pos, &config, &mut state, &mut weights);
-    next = argmax(&state.logits);
-    print!("{}", vocab[next]);
-    io::stdout().flush().expect("Failed to flush stdout");
-    token = next;
-    pos += 1;
-  }
-  println!();
+  //let mut next: usize;
+  //let mut token = 1; // 1 = BOS token in Llama-2 sentencepiece
+  //let mut pos = 0;
+  //let start = std::time::Instant::now();
+  //while pos < config.seq_len {
+  //  transformer(token, pos, &config, &mut state, &mut weights);
+  //  next = argmax(&state.logits);
+  //  print!("{}", vocab[next]);
+  //  io::stdout().flush().expect("Failed to flush stdout");
+  //  token = next;
+  //  pos += 1;
+  //}
+  //println!();
 
-  println!("tok/s = {}", config.seq_len as f32 / start.elapsed().as_secs_f32());
+  //println!("tok/s = {}", config.seq_len as f32 / start.elapsed().as_secs_f32());
 }
